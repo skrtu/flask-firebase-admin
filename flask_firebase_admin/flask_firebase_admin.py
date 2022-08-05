@@ -93,6 +93,33 @@ class FirebaseAdmin:
     def admin(self) -> firebase_admin.App:
         return self._admin
 
+    def cookie_required(self, f: Callable) -> Callable:
+        @wraps(f)
+        def wrap(*args, **kwargs):
+            token = get_authorization_cookie(request)
+            
+            if token is None:
+                return self.make_401("No credentials provided")
+
+            try:
+                payload_attr = current_app.config["FIREBASE_ADMIN_PAYLOAD_ATTR"]
+                jwt_payload = self.decode_token(token)
+
+                setattr(request, payload_attr, jwt_payload)
+            except (
+                auth.InvalidIdTokenError,
+                auth.ExpiredIdTokenError,
+                auth.RevokedIdTokenError,
+                auth.CertificateFetchError,
+            ):
+                return self.make_401("Cookie validation Failed")
+            except Exception as e:
+                return self.make_401(str(e))
+
+            return f(*args, **kwargs)
+
+        return wrap
+
     def jwt_required(self, f: Callable) -> Callable:
         @wraps(f)
         def wrap(*args, **kwargs):
@@ -116,6 +143,7 @@ class FirebaseAdmin:
             try:
                 payload_attr = current_app.config["FIREBASE_ADMIN_PAYLOAD_ATTR"]
                 jwt_payload = self.decode_token(token)
+                print(jwt_payload)
                 setattr(request, payload_attr, jwt_payload)
             except (
                 auth.InvalidIdTokenError,
@@ -131,7 +159,9 @@ class FirebaseAdmin:
 
     def decode_token(self, token: str) -> dict[str, Any]:
         check_revoked = current_app.config["FIREBASE_ADMIN_CHECK_REVOKED"]
+        # verified_authentication = auth.verify_id_token(token, self.admin, check_revoked)
         return auth.verify_id_token(token, self.admin, check_revoked)
+
 
     def make_401(self, message: str) -> Response:
         body = {"error": {"message": message}}
@@ -146,6 +176,8 @@ class FirebaseAdmin:
 def get_authorization_header(request: Request) -> str | None:
     return request.headers.get("Authorization")
 
+def get_authorization_cookie(request: Request) -> str | None:
+    return request.cookies.get("session")
 
 def parse_header_credentials(header: str) -> tuple[None, None] | tuple[str, str]:
     values = header.split(" ")
